@@ -4,6 +4,9 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/op/go-logging"
@@ -21,16 +24,19 @@ type ClientConfig struct {
 
 // Client Entity that encapsulates how
 type Client struct {
-	config ClientConfig
-	conn   net.Conn
+	config   ClientConfig
+	conn     net.Conn
+	sigchan  chan os.Signal
 }
 
 // NewClient Initializes a new client receiving the configuration
 // as a parameter
 func NewClient(config ClientConfig) *Client {
 	client := &Client{
-		config: config,
+		config:  config,
+		sigchan: make(chan os.Signal, 1),
 	}
+	signal.Notify(client.sigchan, syscall.SIGTERM)
 	return client
 }
 
@@ -55,19 +61,31 @@ func (c *Client) StartClientLoop() {
 	// There is an autoincremental msgID to identify every message sent
 	// Messages if the message amount threshold has not been surpassed
 	for msgID := 1; msgID <= c.config.LoopAmount; msgID++ {
+		select {
+		case <-c.sigchan:
+			log.Infof("action: sigterm_received | result: success | client_id: %v", c.config.ID)
+			if c.conn != nil {
+				c.conn.Close()
+				log.Infof("action: close_connection | result: success | client_id: %v", c.config.ID)
+			}
+			return
+		default:
+		}
 		// Create the connection the server in every loop iteration. Send an
-		c.createClientSocket()
+		err := c.createClientSocket()
+		if err != nil {
+			return
+		}
 
-		// TODO: Modify the send to avoid short-write
 		fmt.Fprintf(
 			c.conn,
 			"[CLIENT %v] Message N°%v\n",
 			c.config.ID,
 			msgID,
 		)
+
 		msg, err := bufio.NewReader(c.conn).ReadString('\n')
 		c.conn.Close()
-
 		if err != nil {
 			log.Errorf("action: receive_message | result: fail | client_id: %v | error: %v",
 				c.config.ID,
@@ -80,10 +98,8 @@ func (c *Client) StartClientLoop() {
 			c.config.ID,
 			msg,
 		)
-
 		// Wait a time between sending one message and the next one
 		time.Sleep(c.config.LoopPeriod)
-
 	}
 	log.Infof("action: loop_finished | result: success | client_id: %v", c.config.ID)
 }
