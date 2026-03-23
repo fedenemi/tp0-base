@@ -11,6 +11,12 @@ services:
       - LOGGING_LEVEL=DEBUG
     networks:
       - testing_net
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; s=socket.socket(); s.connect(('localhost',12345)); s.close()"]
+      interval: 1s
+      timeout: 3s
+      retries: 10
+      start_period: 2s
     volumes:
       - ./server/config.ini:/config.ini
 """
@@ -28,7 +34,7 @@ def client_count(args):
     try:
         return int(args[2])
     except ValueError:
-        print("Cantidad de clientes invalida, debe ser un entero.")
+        print("Invalid input: number of clients must be a valid integer.")
         sys.exit(1)
 
 def define_client(client_id):
@@ -42,7 +48,8 @@ def define_client(client_id):
     networks:
       - testing_net
     depends_on:
-      - server
+      server:
+        condition: service_healthy
     volumes:
       - ./client/config.yaml:/config.yaml
 """
@@ -50,10 +57,12 @@ def define_client(client_id):
 def main():
     args = sys.argv
     if len(args) != 3:
-        print("Uso: python3 mi-generador.py <archivo_salida> <cantidad_clientes>")
+        print("Usage error: please provide <output_filename> and <client_count>.")
         sys.exit(1)
+
     output_file = args[1]
     clients = client_count(args)
+
     with open(output_file, "w") as f:
         f.write(SERVER_CONFIG)
         for client_id in range(1, clients + 1):
