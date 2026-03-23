@@ -10,6 +10,12 @@ services:
       - PYTHONUNBUFFERED=1
     networks:
       - testing_net
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; s=socket.socket(); s.connect(('localhost',12345)); s.close()"]
+      interval: 1s
+      timeout: 3s
+      retries: 10
+      start_period: 2s
     volumes:
       - ./server/config.ini:/config.ini
 """
@@ -40,7 +46,8 @@ def define_client(client_id):
     networks:
       - testing_net
     depends_on:
-      - server
+      server:
+        condition: service_healthy
     volumes:
       - ./client/config.yaml:/config.yaml
 """
