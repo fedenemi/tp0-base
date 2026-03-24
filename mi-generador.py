@@ -8,7 +8,6 @@ services:
     entrypoint: python3 /main.py
     environment:
       - PYTHONUNBUFFERED=1
-      - LOGGING_LEVEL=DEBUG
     networks:
       - testing_net
     healthcheck:
@@ -34,10 +33,10 @@ def client_count(args):
     try:
         return int(args[2])
     except ValueError:
-        print("Invalid input: number of clients must be a valid integer.")
+        print("Cantidad de clientes invalida, debe ser un entero.")
         sys.exit(1)
 
-def define_client(client_id):
+def define_client(client_id, total_clients):
     return f"""  client{client_id}:
     container_name: client{client_id}
     image: client:latest
@@ -57,16 +56,35 @@ def define_client(client_id):
 def main():
     args = sys.argv
     if len(args) != 3:
-        print("Usage error: please provide <output_filename> and <client_count>.")
+        print("Uso: python3 mi-generador.py <archivo_salida> <cantidad_clientes>")
         sys.exit(1)
-
     output_file = args[1]
     clients = client_count(args)
-
     with open(output_file, "w") as f:
-        f.write(SERVER_CONFIG)
+        server_block = SERVER_CONFIG.rstrip('\n')
+        server_block += f"\n    environment:\n      - PYTHONUNBUFFERED=1\n      - AGENCIES_AMOUNT={clients}\n"
+        f.write(f"""name: tp0
+services:
+  server:
+    container_name: server
+    image: server:latest
+    entrypoint: python3 /main.py
+    environment:
+      - PYTHONUNBUFFERED=1
+      - AGENCIES_AMOUNT={clients}
+    networks:
+      - testing_net
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; s=socket.socket(); s.connect(('localhost',12345)); s.close()"]
+      interval: 1s
+      timeout: 3s
+      retries: 10
+      start_period: 2s
+    volumes:
+      - ./server/config.ini:/config.ini
+""")
         for client_id in range(1, clients + 1):
-            f.write(define_client(client_id))
+            f.write(define_client(client_id, clients))
         f.write(NETWORK_CONFIG)
 
 if __name__ == "__main__":

@@ -16,9 +16,7 @@ def initialize_config():
     If parsing succeeded, the function returns a ConfigParser object 
     with config parameters
     """
-
     config = ConfigParser(os.environ)
-    # If config.ini does not exists original config object is not modified
     config.read("config.ini")
 
     config_params = {}
@@ -26,6 +24,7 @@ def initialize_config():
         config_params["port"] = int(os.getenv('SERVER_PORT', config["DEFAULT"]["SERVER_PORT"]))
         config_params["listen_backlog"] = int(os.getenv('SERVER_LISTEN_BACKLOG', config["DEFAULT"]["SERVER_LISTEN_BACKLOG"]))
         config_params["logging_level"] = os.getenv('LOGGING_LEVEL', config["DEFAULT"]["LOGGING_LEVEL"])
+        config_params["agencies_amount"] = int(os.getenv('AGENCIES_AMOUNT', config["DEFAULT"].get("AGENCIES_AMOUNT", "5")))
     except KeyError as e:
         raise KeyError("Key was not found. Error: {} .Aborting server".format(e))
     except ValueError as e:
@@ -33,6 +32,21 @@ def initialize_config():
 
     return config_params
 
+
+def main():
+    config_params = initialize_config()
+    logging_level = config_params["logging_level"]
+    port = config_params["port"]
+    listen_backlog = config_params["listen_backlog"]
+    agencies_amount = config_params["agencies_amount"]
+
+    initialize_log(logging_level)
+
+    logging.debug(f"action: config | result: success | port: {port} | "
+                  f"listen_backlog: {listen_backlog} | logging_level: {logging_level}")
+
+    server = Server(port, listen_backlog, agencies_amount)
+    server.run()
 
 def main():
     config_params = initialize_config()

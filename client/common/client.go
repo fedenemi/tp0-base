@@ -68,6 +68,10 @@ func (c *Client) createClientSocket() error {
 }
 
 func (c *Client) sendBatch(bets []Bet) error {
+	if _, err := c.conn.Write([]byte{'B'}); err != nil {
+		return err
+	}
+
 	countBuf := make([]byte, 4)
 	binary.BigEndian.PutUint32(countBuf, uint32(len(bets)))
 	if _, err := c.conn.Write(countBuf); err != nil {
@@ -90,6 +94,99 @@ func (c *Client) sendBatch(bets []Bet) error {
 		}
 	}
 	return nil
+}
+
+func (c *Client) notifyFin() error {
+	if err := c.createClientSocket(); err != nil {
+		return err
+	}
+	defer c.conn.Close()
+
+	agencyID, _ := parseAgencyID(c.config.ID)
+	buf := make([]byte, 5)
+	buf[0] = 'F'
+	binary.BigEndian.PutUint32(buf[1:], uint32(agencyID))
+	if _, err := c.conn.Write(buf); err != nil {
+		return err
+	}
+
+	resp, err := bufio.NewReader(c.conn).ReadString('\n')
+	if err != nil {
+		return err
+	}
+	if resp != "OK\n" {
+		return fmt.Errorf("respuesta inesperada: %v", resp)
+	}
+	return nil
+}
+
+func (c *Client) queryWinners() ([]string, error) {
+	for {
+		if err := c.createClientSocket(); err != nil {
+			return nil, err
+		}
+
+		agencyID, _ := parseAgencyID(c.config.ID)
+		buf := make([]byte, 5)
+		buf[0] = 'W'
+		binary.BigEndian.PutUint32(buf[1:], uint32(agencyID))
+		if _, err := c.conn.Write(buf); err != nil {
+			c.conn.Close()
+			return nil, err
+		}
+
+		header := make([]byte, 4)
+		if _, err := readAll(c.conn, header); err != nil {
+			c.conn.Close()
+			return nil, err
+		}
+
+		if string(header) == "WAIT" {
+			// por el \n
+			extra := make([]byte, 1)
+			readAll(c.conn, extra)
+			c.conn.Close()
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+
+		count := int(binary.BigEndian.Uint32(header))
+		var winners []string
+		for i := 0; i < count; i++ {
+			lenBuf := make([]byte, 4)
+			if _, err := readAll(c.conn, lenBuf); err != nil {
+				c.conn.Close()
+				return nil, err
+			}
+			dniLen := int(binary.BigEndian.Uint32(lenBuf))
+			dniBuf := make([]byte, dniLen)
+			if _, err := readAll(c.conn, dniBuf); err != nil {
+				c.conn.Close()
+				return nil, err
+			}
+			winners = append(winners, string(dniBuf))
+		}
+		c.conn.Close()
+		return winners, nil
+	}
+}
+
+func readAll(conn net.Conn, buf []byte) (int, error) {
+	total := 0
+	for total < len(buf) {
+		n, err := conn.Read(buf[total:])
+		total += n
+		if err != nil {
+			return total, err
+		}
+	}
+	return total, nil
+}
+
+func parseAgencyID(id string) (int, error) {
+	var n int
+	fmt.Sscanf(id, "%d", &n)
+	return n, nil
 }
 
 func (c *Client) readBets() ([][]Bet, error) {
@@ -191,5 +288,16 @@ func (c *Client) StartClientLoop() {
 		}
 	}
 
-	log.Infof("action: loop_finished | result: success | client_id: %v", c.config.ID)
+	if err := c.notifyFin(); err != nil {
+		log.Errorf("action: fin_apuestas | result: fail | client_id: %v | error: %v", c.config.ID, err)
+		return
+	}
+
+	winners, err := c.queryWinners()
+	if err != nil {
+		log.Errorf("action: consulta_ganadores | result: fail | client_id: %v | error: %v", c.config.ID, err)
+		return
+	}
+
+	log.Infof("action: consulta_ganadores | result: success | cant_ganadores: %v", len(winners))
 }
