@@ -44,11 +44,6 @@ def define_client(client_id):
     entrypoint: /client
     environment:
       - CLI_ID={client_id}
-      - NOMBRE=Santiago Lionel
-      - APELLIDO=Lorca
-      - DOCUMENTO=30904465
-      - NACIMIENTO=1999-03-17
-      - NUMERO=7574
     networks:
       - testing_net
     depends_on:
@@ -56,6 +51,7 @@ def define_client(client_id):
         condition: service_healthy
     volumes:
       - ./client/config.yaml:/config.yaml
+      - ./.data/agency-{client_id}.csv:/agency.csv
 """
 
 def main():

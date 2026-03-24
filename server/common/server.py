@@ -58,29 +58,35 @@ class Server:
         """
 
         try:
-            raw_len = self.__recv_all(client_sock, 4)
-            msg_len = int.from_bytes(raw_len, byteorder='big')
+            raw_count = self.__recv_all(client_sock, 4)
+            batch_count = int.from_bytes(raw_count, byteorder='big')
 
-            raw_msg = self.__recv_all(client_sock, msg_len)
-            msg = raw_msg.decode('utf-8').strip()
+            bets = []
+            for _ in range(batch_count):
+                raw_len = self.__recv_all(client_sock, 4)
+                msg_len = int.from_bytes(raw_len, byteorder='big')
+                raw_msg = self.__recv_all(client_sock, msg_len)
+                msg = raw_msg.decode('utf-8').strip()
+                fields = msg.split(',')
+                bet = Bet(fields[0], fields[1], fields[2], fields[3], fields[4], fields[5])
+                bets.append(bet)
 
-            if not msg:
-                return
+            store_bets(bets)
+            for bet in bets:
+                logging.info(f'action: apuesta_almacenada | result: success | dni: {bet.document} | numero: {bet.number}')
 
-            fields = msg.split(',')
-            if len(fields) < 6:
-                return
-
-            bet = Bet(fields[0], fields[1], fields[2], fields[3], fields[4], fields[5])
-            store_bets([bet])
-
-            logging.info(f'action: apuesta_almacenada | result: success | dni: {bet.document} | numero: {bet.number}')
+            logging.info(f'action: apuesta_recibida | result: success | cantidad: {len(bets)}')
             client_sock.send(b'OK\n')
-        except OSError as e:
+        except OSError:
             pass
+        except Exception as e:
+            logging.error(f'action: apuesta_recibida | result: fail | cantidad: 0 | error: {e}')
+            try:
+                client_sock.send(b'ERROR\n')
+            except:
+                pass
         finally:
             client_sock.close()
-            logging.info("action: close_client_socket | result: success")
 
     def __accept_new_connection(self):
         """
