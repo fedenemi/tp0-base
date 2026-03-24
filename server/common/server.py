@@ -1,6 +1,7 @@
 import socket
 import logging
 import signal
+from common.utils import Bet, store_bets
 
 class Server:
     def __init__(self, port, listen_backlog):
@@ -38,7 +39,15 @@ class Server:
                     break
                 raise
         logging.info("action: server_shutdown | result: success")
-        
+
+    def __recv_all(self, sock, n):
+        data = b''
+        while len(data) < n:
+            chunk = sock.recv(n - len(data))
+            if not chunk:
+                raise OSError("connection closed")
+            data += chunk
+        return data
 
     def __handle_client_connection(self, client_sock):
         """
@@ -47,11 +56,26 @@ class Server:
         If a problem arises in the communication with the client, the
         client socket will also be closed
         """
+
         try:
-            msg = client_sock.recv(1024).rstrip().decode('utf-8')
-            addr = client_sock.getpeername()
-            logging.info(f'action: receive_message | result: success | ip: {addr[0]} | msg: {msg}')
-            client_sock.send("{}\n".format(msg).encode('utf-8'))
+            raw_len = self.__recv_all(client_sock, 4)
+            msg_len = int.from_bytes(raw_len, byteorder='big')
+
+            raw_msg = self.__recv_all(client_sock, msg_len)
+            msg = raw_msg.decode('utf-8').strip()
+
+            if not msg:
+                return
+
+            fields = msg.split(',')
+            if len(fields) < 6:
+                return
+
+            bet = Bet(fields[0], fields[1], fields[2], fields[3], fields[4], fields[5])
+            store_bets([bet])
+
+            logging.info(f'action: apuesta_almacenada | result: success | dni: {bet.document} | numero: {bet.number}')
+            client_sock.send(b'OK\n')
         except OSError as e:
             logging.error(f"action: receive_message | result: fail | error: {e}")
         finally:
