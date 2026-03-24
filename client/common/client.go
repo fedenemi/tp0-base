@@ -68,7 +68,7 @@ func (c *Client) StartClientLoop() {
 				c.conn.Close()
 				log.Infof("action: close_connection | result: success | client_id: %v", c.config.ID)
 			}
-			return
+			os.Exit(0)  
 		default:
 		}
 		// Create the connection the server in every loop iteration. Send an
