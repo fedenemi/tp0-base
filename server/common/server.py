@@ -1,6 +1,7 @@
 import socket
 import logging
 import signal
+import threading
 from common.utils import Bet, store_bets, load_bets, has_won
 
 
@@ -14,8 +15,8 @@ class Server:
         self._agencies_amount = agencies_amount
         self._finished_agencies = set()
         self._lottery_done = False
+        self._lock = threading.Lock()
         signal.signal(signal.SIGTERM, self.__handle_sigterm)
-
 
     def __handle_sigterm(self, sig, frame):
         logging.info("action: sigterm_received | result: success")
@@ -34,14 +35,19 @@ class Server:
 
         # TODO: Modify this program to handle signal to graceful shutdown
         # the server
+        threads = []
         while self._running:
             try:
                 client_sock = self.__accept_new_connection()
-                self.__handle_client_connection(client_sock)
+                t = threading.Thread(target=self.__handle_client_connection, args=(client_sock,))
+                t.start()
+                threads.append(t)
             except OSError:
                 if not self._running:
                     break
                 raise
+        for t in threads:
+            t.join()
         logging.info("action: server_shutdown | result: success")
 
     def __recv_all(self, sock, n):
@@ -73,7 +79,9 @@ class Server:
             bet = Bet(fields[0], fields[1], fields[2], fields[3], fields[4], fields[5])
             bets.append(bet)
 
-        store_bets(bets)
+        with self._lock:
+            store_bets(bets)
+
         for bet in bets:
             logging.info(f'action: apuesta_almacenada | result: success | dni: {bet.document} | numero: {bet.number}')
 
@@ -83,11 +91,13 @@ class Server:
     def __handle_fin(self, client_sock):
         raw_agency = self.__recv_all(client_sock, 4)
         agency_id = int.from_bytes(raw_agency, byteorder='big')
-        self._finished_agencies.add(agency_id)
 
-        if len(self._finished_agencies) == self._agencies_amount:
-            self._lottery_done = True
-            logging.info("action: sorteo | result: success")
+        with self._lock:
+            self._finished_agencies.add(agency_id)
+
+            if len(self._finished_agencies) == self._agencies_amount:
+                self._lottery_done = True
+                logging.info("action: sorteo | result: success")
 
         client_sock.send(b'OK\n')
 
@@ -95,12 +105,16 @@ class Server:
         raw_agency = self.__recv_all(client_sock, 4)
         agency_id = int.from_bytes(raw_agency, byteorder='big')
 
-        if not self._lottery_done:
+        with self._lock:
+            lottery_done = self._lottery_done
+
+        if not lottery_done:
             client_sock.send(b'WAIT\n')
             return
 
-        winners = [b for b in load_bets() if b.agency == agency_id and has_won(b)]
-        
+        with self._lock:
+            winners = [b for b in load_bets() if b.agency == agency_id and has_won(b)]
+
         count_buf = len(winners).to_bytes(4, byteorder='big')
         client_sock.send(count_buf)
         for w in winners:
