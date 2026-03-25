@@ -84,7 +84,6 @@ class Server:
 
         for bet in bets:
             logging.info(f'action: apuesta_almacenada | result: success | dni: {bet.document} | numero: {bet.number}')
-
         logging.info(f'action: apuesta_recibida | result: success | cantidad: {len(bets)}')
         client_sock.send(b'OK\n')
 
@@ -94,7 +93,6 @@ class Server:
 
         with self._lock:
             self._finished_agencies.add(agency_id)
-
             if len(self._finished_agencies) == self._agencies_amount:
                 self._lottery_done = True
                 logging.info("action: sorteo | result: success")
@@ -106,17 +104,12 @@ class Server:
         agency_id = int.from_bytes(raw_agency, byteorder='big')
 
         with self._lock:
-            lottery_done = self._lottery_done
-
-        if not lottery_done:
-            client_sock.send(b'WAIT\n')
-            return
-
-        with self._lock:
+            if not self._lottery_done:
+                client_sock.send(b'WAIT\n')
+                return
             winners = [b for b in load_bets() if b.agency == agency_id and has_won(b)]
 
-        count_buf = len(winners).to_bytes(4, byteorder='big')
-        client_sock.send(count_buf)
+        client_sock.send(len(winners).to_bytes(4, byteorder='big'))
         for w in winners:
             dni_bytes = w.document.encode('utf-8')
             client_sock.send(len(dni_bytes).to_bytes(4, byteorder='big'))
@@ -138,7 +131,7 @@ class Server:
             logging.error(f'action: apuesta_recibida | result: fail | cantidad: 0 | error: {e}')
             try:
                 client_sock.send(b'ERROR\n')
-            except:
+            except Exception:
                 pass
         finally:
             client_sock.close()
