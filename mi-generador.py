@@ -8,7 +8,6 @@ services:
     entrypoint: python3 /main.py
     environment:
       - PYTHONUNBUFFERED=1
-      - LOGGING_LEVEL=DEBUG
     networks:
       - testing_net
     healthcheck:
@@ -34,7 +33,7 @@ def client_count(args):
     try:
         return int(args[2])
     except ValueError:
-        print("Invalid input: number of clients must be a valid integer.")
+        print("Cantidad de clientes invalida, debe ser un entero.")
         sys.exit(1)
 
 def define_client(client_id):
@@ -61,7 +60,7 @@ def define_client(client_id):
 def main():
     args = sys.argv
     if len(args) != 3:
-        print("Usage error: please provide <output_filename> and <client_count>.")
+        print("Uso: python3 mi-generador.py <archivo_salida> <cantidad_clientes>")
         sys.exit(1)
 
     output_file = args[1]
