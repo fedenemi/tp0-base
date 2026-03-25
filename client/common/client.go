@@ -15,6 +15,9 @@ import (
 
 var log = logging.MustGetLogger("log")
 
+const connectRetries = 5
+const connectRetryDelay = 1 * time.Second
+
 type ClientConfig struct {
 	ID            string
 	ServerAddress string
@@ -48,11 +51,35 @@ func NewClient(config ClientConfig) *Client {
 	return client
 }
 
+func readAll(conn net.Conn, buf []byte) error {
+	total := 0
+	for total < len(buf) {
+		n, err := conn.Read(buf[total:])
+		total += n
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeAll(conn net.Conn, buf []byte) error {
+	total := 0
+	for total < len(buf) {
+		n, err := conn.Write(buf[total:])
+		total += n
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // CreateClientSocket Initializes client socket. In case of
 // failure, error is printed in stdout/stderr and exit 1
 // is returned
 func (c *Client) createClientSocket() error {
-	for retries := 0; retries < 5; retries++ {
+	for i := 0; i < connectRetries; i++ {
 		conn, err := net.Dial("tcp", c.config.ServerAddress)
 		if err == nil {
 			c.conn = conn
@@ -62,15 +89,25 @@ func (c *Client) createClientSocket() error {
 			"action: connect | result: fail | client_id: %v | error: %v",
 			c.config.ID, err,
 		)
-		time.Sleep(1 * time.Second)
+		time.Sleep(connectRetryDelay)
 	}
-	return fmt.Errorf("no se pudo conectar al servidor")
+	return fmt.Errorf("no se pudo conectar al servidor tras %d intentos", connectRetries)
 }
 
+func (c *Client) closeConn() {
+	if c.conn != nil {
+		c.conn.Close()
+		c.conn = nil
+		log.Infof("action: close_connection | result: success | client_id: %v", c.config.ID)
+	}
+}
+
+// sendBatch envía un batch de apuestas al servidor.
+// Protocolo: 4 bytes cantidad + [4 bytes longitud + datos CSV] * cantidad
 func (c *Client) sendBatch(bets []Bet) error {
 	countBuf := make([]byte, 4)
 	binary.BigEndian.PutUint32(countBuf, uint32(len(bets)))
-	if _, err := c.conn.Write(countBuf); err != nil {
+	if err := writeAll(c.conn, countBuf); err != nil {
 		return err
 	}
 
@@ -82,10 +119,10 @@ func (c *Client) sendBatch(bets []Bet) error {
 		msgBytes := []byte(msg)
 		lenBuf := make([]byte, 4)
 		binary.BigEndian.PutUint32(lenBuf, uint32(len(msgBytes)))
-		if _, err := c.conn.Write(lenBuf); err != nil {
+		if err := writeAll(c.conn, lenBuf); err != nil {
 			return err
 		}
-		if _, err := c.conn.Write(msgBytes); err != nil {
+		if err := writeAll(c.conn, msgBytes); err != nil {
 			return err
 		}
 	}
@@ -160,10 +197,7 @@ func (c *Client) StartClientLoop() {
 		select {
 		case <-c.sigchan:
 			log.Infof("action: sigterm_received | result: success | client_id: %v", c.config.ID)
-			if c.conn != nil {
-				c.conn.Close()
-				log.Infof("action: close_connection | result: success | client_id: %v", c.config.ID)
-			}
+			c.closeConn()
 			return
 		default:
 		}
@@ -174,12 +208,12 @@ func (c *Client) StartClientLoop() {
 
 		if err := c.sendBatch(batch); err != nil {
 			log.Errorf("action: apuesta_enviada | result: fail | client_id: %v | error: %v", c.config.ID, err)
-			c.conn.Close()
+			c.closeConn()
 			return
 		}
 
 		resp, err := bufio.NewReader(c.conn).ReadString('\n')
-		c.conn.Close()
+		c.closeConn()
 		if err != nil {
 			log.Errorf("action: apuesta_enviada | result: fail | client_id: %v | error: %v", c.config.ID, err)
 			return
