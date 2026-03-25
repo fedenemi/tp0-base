@@ -101,8 +101,7 @@ class Server:
 
         winners = [b for b in load_bets() if b.agency == agency_id and has_won(b)]
         
-        count_buf = len(winners).to_bytes(4, byteorder='big')
-        client_sock.send(count_buf)
+        client_sock.send(len(winners).to_bytes(4, byteorder='big'))
         for w in winners:
             dni_bytes = w.document.encode('utf-8')
             client_sock.send(len(dni_bytes).to_bytes(4, byteorder='big'))
@@ -124,7 +123,7 @@ class Server:
             logging.error(f'action: apuesta_recibida | result: fail | cantidad: 0 | error: {e}')
             try:
                 client_sock.send(b'ERROR\n')
-            except:
+            except Exception:
                 pass
         finally:
             client_sock.close()

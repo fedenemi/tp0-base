@@ -1,25 +1,5 @@
 import sys
 
-SERVER_CONFIG = """name: tp0
-services:
-  server:
-    container_name: server
-    image: server:latest
-    entrypoint: python3 /main.py
-    environment:
-      - PYTHONUNBUFFERED=1
-    networks:
-      - testing_net
-    healthcheck:
-      test: ["CMD", "python3", "-c", "import socket; s=socket.socket(); s.connect(('localhost',12345)); s.close()"]
-      interval: 1s
-      timeout: 3s
-      retries: 10
-      start_period: 2s
-    volumes:
-      - ./server/config.ini:/config.ini
-"""
-
 NETWORK_CONFIG = """
 networks:
   testing_net:
@@ -36,7 +16,29 @@ def client_count(args):
         print("Cantidad de clientes invalida, debe ser un entero.")
         sys.exit(1)
 
-def define_client(client_id, total_clients):
+def server_config(agencies_amount):
+    return f"""name: tp0
+services:
+  server:
+    container_name: server
+    image: server:latest
+    entrypoint: python3 /main.py
+    environment:
+      - PYTHONUNBUFFERED=1
+      - AGENCIES_AMOUNT={agencies_amount}
+    networks:
+      - testing_net
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; s=socket.socket(); s.connect(('localhost',12345)); s.close()"]
+      interval: 1s
+      timeout: 3s
+      retries: 10
+      start_period: 2s
+    volumes:
+      - ./server/config.ini:/config.ini
+"""
+
+def define_client(client_id):
     return f"""  client{client_id}:
     container_name: client{client_id}
     image: client:latest
@@ -61,30 +63,9 @@ def main():
     output_file = args[1]
     clients = client_count(args)
     with open(output_file, "w") as f:
-        server_block = SERVER_CONFIG.rstrip('\n')
-        server_block += f"\n    environment:\n      - PYTHONUNBUFFERED=1\n      - AGENCIES_AMOUNT={clients}\n"
-        f.write(f"""name: tp0
-services:
-  server:
-    container_name: server
-    image: server:latest
-    entrypoint: python3 /main.py
-    environment:
-      - PYTHONUNBUFFERED=1
-      - AGENCIES_AMOUNT={clients}
-    networks:
-      - testing_net
-    healthcheck:
-      test: ["CMD", "python3", "-c", "import socket; s=socket.socket(); s.connect(('localhost',12345)); s.close()"]
-      interval: 1s
-      timeout: 3s
-      retries: 10
-      start_period: 2s
-    volumes:
-      - ./server/config.ini:/config.ini
-""")
+        f.write(server_config(clients))
         for client_id in range(1, clients + 1):
-            f.write(define_client(client_id, clients))
+            f.write(define_client(client_id))
         f.write(NETWORK_CONFIG)
 
 if __name__ == "__main__":
