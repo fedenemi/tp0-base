@@ -2,7 +2,6 @@ package common
 
 import (
 	"bufio"
-	"encoding/binary"
 	"fmt"
 	"net"
 	"os"
@@ -51,30 +50,6 @@ func NewClient(config ClientConfig) *Client {
 	return client
 }
 
-func readAll(conn net.Conn, buf []byte) error {
-	total := 0
-	for total < len(buf) {
-		n, err := conn.Read(buf[total:])
-		total += n
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func writeAll(conn net.Conn, buf []byte) error {
-	total := 0
-	for total < len(buf) {
-		n, err := conn.Write(buf[total:])
-		total += n
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // CreateClientSocket Initializes client socket. In case of
 // failure, error is printed in stdout/stderr and exit 1
 // is returned
@@ -100,33 +75,6 @@ func (c *Client) closeConn() {
 		c.conn = nil
 		log.Infof("action: close_connection | result: success | client_id: %v", c.config.ID)
 	}
-}
-
-// sendBatch envía un batch de apuestas al servidor.
-// Protocolo: 4 bytes cantidad + [4 bytes longitud + datos CSV] * cantidad
-func (c *Client) sendBatch(bets []Bet) error {
-	countBuf := make([]byte, 4)
-	binary.BigEndian.PutUint32(countBuf, uint32(len(bets)))
-	if err := writeAll(c.conn, countBuf); err != nil {
-		return err
-	}
-
-	for _, bet := range bets {
-		msg := fmt.Sprintf("%s,%s,%s,%s,%s,%s\n",
-			bet.Agency, bet.FirstName, bet.LastName,
-			bet.Document, bet.Birthdate, bet.Number,
-		)
-		msgBytes := []byte(msg)
-		lenBuf := make([]byte, 4)
-		binary.BigEndian.PutUint32(lenBuf, uint32(len(msgBytes)))
-		if err := writeAll(c.conn, lenBuf); err != nil {
-			return err
-		}
-		if err := writeAll(c.conn, msgBytes); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (c *Client) readBets() ([][]Bet, error) {
@@ -206,7 +154,7 @@ func (c *Client) StartClientLoop() {
 			return
 		}
 
-		if err := c.sendBatch(batch); err != nil {
+		if err := SendBatch(c.conn, batch); err != nil {
 			log.Errorf("action: apuesta_enviada | result: fail | client_id: %v | error: %v", c.config.ID, err)
 			c.closeConn()
 			return
