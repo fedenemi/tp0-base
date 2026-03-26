@@ -14,7 +14,7 @@ import (
 
 var log = logging.MustGetLogger("log")
 
-const connectRetries = 5
+const connectRetries = 15
 const connectRetryDelay = 1 * time.Second
 
 type ClientConfig struct {
@@ -59,13 +59,15 @@ func (c *Client) createClientSocket() error {
 			c.conn = conn
 			return nil
 		}
-		log.Criticalf(
-			"action: connect | result: fail | client_id: %v | error: %v",
+		log.Debugf(
+			"action: connect | result: in_progress | client_id: %v | error: %v",
 			c.config.ID, err,
 		)
 		time.Sleep(connectRetryDelay)
 	}
-	return fmt.Errorf("no se pudo conectar al servidor tras %d intentos", connectRetries)
+	err := fmt.Errorf("no se pudo conectar al servidor tras %d intentos", connectRetries)
+	log.Criticalf("action: connect | result: fail | client_id: %v | error: %v", c.config.ID, err)
+	return err
 }
 
 func (c *Client) closeConn() {
@@ -95,11 +97,11 @@ func (c *Client) StartClientLoop() {
 		}
 
 		if err := c.createClientSocket(); err != nil {
-			return
+			return 
 		}
 
 		if err := SendBet(c.conn, bet); err != nil {
-			log.Errorf("action: apuesta_enviada | result: fail | client_id: %v | error: %v",
+			log.Errorf("action: apuesta_enviada | result: error_transitorio | client_id: %v | error: %v",
 				c.config.ID, err)
 			c.closeConn()
 			time.Sleep(connectRetryDelay)
