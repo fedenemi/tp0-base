@@ -1,6 +1,6 @@
 # TP0: Docker + Comunicaciones + Concurrencia
 
-Cliente en Golang y servidor en Python encapsulados en containers Docker.
+En este trabajo se armó un sistema cliente/servidor usando Docker Compose. El cliente está hecho en Go y el servidor en Python, y se comunican por sockets TCP.
 
 ## Cómo ejecutar
 
@@ -20,21 +20,23 @@ Para el ejercicio 3, con el sistema levantado:
 
 ## Ej1 
 
-`generar-compose.sh` recibe el nombre del archivo de salida y la cantidad de clientes y delega en `mi-generador.py` para generar el yaml. Cada cliente recibe su ID via variable de entorno `CLI_ID`. Los archivos de configuración se montan como volúmenes para no tener que reconstruir las imágenes al cambiarlos.
+Se hizo `generar-compose.sh` para armar el compose según la cantidad de clientes que se quiera levantar. `generar-compose.sh` recibe el nombre del archivo de salida y la cantidad de clientes y delega en `mi-generador.py` para generar el yaml. Cada cliente recibe su ID via variable de entorno `CLI_ID`. Los archivos de configuración se montan como volúmenes para no tener que reconstruir las imágenes al cambiarlos.
 
 ## Ej2
 
-`config.ini` del servidor y `config.yaml` del cliente se montan como volúmenes bind. Modificar estos archivos tiene efecto inmediato sin reconstruir la imagen.
+La configuración del cliente y del servidor se monta desde el host. `config.ini` del servidor y `config.yaml` del cliente se montan como volúmenes bind. Modificar estos archivos tiene efecto inmediato sin reconstruir la imagen.
 
 ## Ej3
 
-`validar-echo-server.sh` corre un container efímero de `busybox` en la red Docker del proyecto y usa `netcat` para enviar un mensaje al servidor y verificar que la respuesta sea idéntica, sin exponer puertos al host.
+Se creó `validar-echo-server.sh` para probar el servidor desde un container aparte, usando `netcat` dentro de la red de Docker para enviar un mensaje al servidor y verificar que la respuesta sea idéntica. La idea fue validar el comportamiento sin exponer puertos en el host.
 
 ## Ej4
 
 Cliente (Go) y servidor (Python) capturan SIGTERM. Al recibirla cierran los sockets abiertos y loguean el cierre antes de terminar.
 
 ## Ej5
+
+Se cambió la comunicación para el caso de Lotería Nacional. El cliente envía los datos de la apuesta y el servidor los recibe y los guarda, manteniendo separada la parte de protocolo de la lógica de negocio.
 
 El cliente lee los datos desde variables de entorno (`NOMBRE`, `APELLIDO`, `DOCUMENTO`, `NACIMIENTO`, `NUMERO`) y los envía al servidor. El servidor almacena con `store_bets()`.
 
@@ -48,7 +50,7 @@ Respuesta del servidor: `OK\n`
 
 ## Ej6
 
-El cliente lee apuestas desde `/agency.csv` (volumen desde `.data/agency-N.csv`) y las envía en batches. Tamaño máximo configurable con `batch.maxAmount` en `config.yaml` (default 100, menos de 8kB por paquete).
+El cliente lee apuestas desde `/agency.csv` (volumen desde `.data/agency-N.csv`) y las envía en batches. Tamaño máximo configurable con `batch.maxAmount` en `config.yaml` (default 100, menos de 8kB por paquete). El cliente ahora manda varias apuestas juntas en batches para hacer menos viajes de red.
 
 ### Protocolo (ej6)
 
