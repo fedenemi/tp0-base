@@ -40,6 +40,18 @@ func NewClient(config ClientConfig) *Client {
 	return client
 }
 
+func writeAll(conn net.Conn, buf []byte) error {
+	total := 0
+	for total < len(buf) {
+		n, err := conn.Write(buf[total:])
+		total += n
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // CreateClientSocket Initializes client socket. In case of
 // failure, error is printed in stdout/stderr and exit 1
 // is returned
@@ -48,9 +60,9 @@ func (c *Client) createClientSocket() error {
 	if err != nil {
 		log.Criticalf(
 			"action: connect | result: fail | client_id: %v | error: %v",
-			c.config.ID,
-			err,
+			c.config.ID, err,
 		)
+		return err
 	}
 	c.conn = conn
 	return nil
@@ -68,37 +80,34 @@ func (c *Client) StartClientLoop() {
 				c.conn.Close()
 				log.Infof("action: close_connection | result: success | client_id: %v", c.config.ID)
 			}
-			os.Exit(0)  
+			return
 		default:
 		}
 		// Create the connection the server in every loop iteration. Send an
-		err := c.createClientSocket()
-		if err != nil {
+		if err := c.createClientSocket(); err != nil {
 			return
 		}
 
-		fmt.Fprintf(
-			c.conn,
-			"[CLIENT %v] Message N°%v\n",
-			c.config.ID,
-			msgID,
-		)
+		msg := fmt.Sprintf("[CLIENT %v] Message N°%v\n", c.config.ID, msgID)
+		if err := writeAll(c.conn, []byte(msg)); err != nil {
+			log.Errorf("action: send_message | result: fail | client_id: %v | error: %v",
+				c.config.ID, err)
+			c.conn.Close()
+			return
+		}
 
-		msg, err := bufio.NewReader(c.conn).ReadString('\n')
+		response, err := bufio.NewReader(c.conn).ReadString('\n')
 		c.conn.Close()
+		log.Infof("action: close_connection | result: success | client_id: %v", c.config.ID)
 		if err != nil {
 			log.Errorf("action: receive_message | result: fail | client_id: %v | error: %v",
-				c.config.ID,
-				err,
-			)
+				c.config.ID, err)
 			return
 		}
 
 		log.Infof("action: receive_message | result: success | client_id: %v | msg: %v",
-			c.config.ID,
-			msg,
-		)
-		// Wait a time between sending one message and the next one
+			c.config.ID, response)
+
 		time.Sleep(c.config.LoopPeriod)
 	}
 	log.Infof("action: loop_finished | result: success | client_id: %v", c.config.ID)
