@@ -1,5 +1,99 @@
 # TP0: Docker + Comunicaciones + Concurrencia
 
+En este trabajo se armó un sistema cliente/servidor usando Docker Compose. El cliente está hecho en Go y el servidor en Python, y se comunican por sockets TCP.
+
+## Cómo ejecutar
+
+Cada ejercicio está en su propia rama (`ej1` a `ej8`).
+```bash
+git checkout ej<N>
+make docker-image
+./generar-compose.sh docker-compose-dev.yaml <cantidad_clientes>
+docker compose -f docker-compose-dev.yaml up
+docker compose -f docker-compose-dev.yaml down
+```
+
+Para el ejercicio 3, con el sistema levantado:
+```bash
+./validar-echo-server.sh
+```
+
+## Ej1 
+
+Se hizo `generar-compose.sh` para armar el compose según la cantidad de clientes que se quiera levantar. `generar-compose.sh` recibe el nombre del archivo de salida y la cantidad de clientes y delega en `mi-generador.py` para generar el yaml. Cada cliente recibe su ID via variable de entorno `CLI_ID`. Los archivos de configuración se montan como volúmenes para no tener que reconstruir las imágenes al cambiarlos.
+
+## Ej2
+
+La configuración del cliente y del servidor se monta desde el host. `config.ini` del servidor y `config.yaml` del cliente se montan como volúmenes bind. Modificar estos archivos tiene efecto inmediato sin reconstruir la imagen.
+
+## Ej3
+
+Se creó `validar-echo-server.sh` para probar el servidor desde un container aparte, usando `netcat` dentro de la red de Docker para enviar un mensaje al servidor y verificar que la respuesta sea idéntica. La idea fue validar el comportamiento sin exponer puertos en el host.
+
+## Ej4
+
+Cliente (Go) y servidor (Python) capturan SIGTERM. Al recibirla cierran los sockets abiertos y loguean el cierre antes de terminar.
+
+## Ej5
+
+Se cambió la comunicación para el caso de Lotería Nacional. El cliente envía los datos de la apuesta y el servidor los recibe y los guarda, manteniendo separada la parte de protocolo de la lógica de negocio.
+
+El cliente lee los datos desde variables de entorno (`NOMBRE`, `APELLIDO`, `DOCUMENTO`, `NACIMIENTO`, `NUMERO`) y los envía al servidor. El servidor almacena con `store_bets()`.
+
+### Protocolo (ej5)
+
+Mensaje de apuesta: `4 bytes longitud + datos CSV`
+
+Formato CSV: `agency,first_name,last_name,document,birthdate,number\n`
+
+Respuesta del servidor: `OK\n`
+
+## Ej6
+
+El cliente lee apuestas desde `/agency.csv` (volumen desde `.data/agency-N.csv`) y las envía en batches. Tamaño máximo configurable con `batch.maxAmount` en `config.yaml` (default 100, menos de 8kB por paquete). El cliente ahora manda varias apuestas juntas en batches para hacer menos viajes de red.
+
+### Protocolo (ej6)
+
+Batch: `4 bytes cantidad + [4 bytes longitud + datos CSV] * cantidad`
+
+Respuesta: `OK\n`
+
+## Ej7
+
+Tras enviar todas las apuestas el cliente notifica al servidor. El servidor espera que todas las agencias (cantidad configurada via `AGENCIES_AMOUNT` en el compose) notifiquen, realiza el sorteo e informa los ganadores a cada agencia individualmente.
+
+### Protocolo (ej7 y ej8)
+
+Cada mensaje comienza con 1 byte de tipo:
+
+| Tipo | Byte | Contenido |
+|------|------|-----------|
+| Batch | `B` | 4 bytes cantidad + apuestas |
+| Fin de apuestas | `F` | 4 bytes agency_id |
+| Consulta ganadores | `W` | 4 bytes agency_id |
+
+Respuestas:
+
+| Situación | Respuesta |
+|-----------|-----------|
+| OK | `OK\n` |
+| Sorteo pendiente | `WAIT\n` |
+| Ganadores | 4 bytes cantidad + [4 bytes longitud + DNI] * cantidad |
+
+Tanto cliente como servidor usan `writeAll`/`readAll` y `recv_all` para garantizar escritura y lectura completa de cada campo, evitando short-reads y short-writes.
+
+## Ej8
+
+El servidor procesa cada conexión en un `threading.Thread` separado. Se usa un `threading.Lock` para proteger:
+
+- Escritura de apuestas al archivo con `store_bets` 
+- Lectura de apuestas con `load_bets` durante el cálculo de ganadores
+- El conjunto `_finished_agencies` y el flag `_lottery_done`
+
+El lock en `__handle_winners` unifica la verificación de `_lottery_done` y la lectura de `load_bets` como una sola sección crítica para evitar race conditions entre el momento de chequear el flag y el de leer los datos.
+
+#####################################################
+
 En el presente repositorio se provee un esqueleto básico de cliente/servidor, en donde todas las dependencias del mismo se encuentran encapsuladas en containers. Los alumnos deberán resolver una guía de ejercicios incrementales, teniendo en cuenta las condiciones de entrega descritas al final de este enunciado.
 
  El cliente (Golang) y el servidor (Python) fueron desarrollados en diferentes lenguajes simplemente para mostrar cómo dos lenguajes de programación pueden convivir en el mismo proyecto con la ayuda de containers, en este caso utilizando [Docker Compose](https://docs.docker.com/compose/).
@@ -179,3 +273,5 @@ Se proveen [pruebas automáticas](https://github.com/7574-sistemas-distribuidos/
 
 El incumplimiento de las pruebas es condición de desaprobación, pero su cumplimiento no es suficiente para la aprobación.  Se pide a los alumnos leer atentamente y **tener en cuenta** los criterios de corrección informados  [en el campus](https://campusgrado.fi.uba.ar/mod/page/view.php?id=73393).
 Respetar el formato y contenido las entradas de logs descritas en los ejercicios, pues son las que se chequean en cada uno de los tests.
+
+
