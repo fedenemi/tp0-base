@@ -10,12 +10,6 @@ services:
       - PYTHONUNBUFFERED=1
     networks:
       - testing_net
-    healthcheck:
-      test: ["CMD", "python3", "-c", "import socket; s=socket.socket(); s.connect(('localhost',12345)); s.close()"]
-      interval: 1s
-      timeout: 3s
-      retries: 10
-      start_period: 2s
     volumes:
       - ./server/config.ini:/config.ini
 """
@@ -51,8 +45,7 @@ def define_client(client_id):
     networks:
       - testing_net
     depends_on:
-      server:
-        condition: service_healthy
+      - server
     volumes:
       - ./client/config.yaml:/config.yaml
 """
@@ -62,10 +55,8 @@ def main():
     if len(args) != 3:
         print("Uso: python3 mi-generador.py <archivo_salida> <cantidad_clientes>")
         sys.exit(1)
-
     output_file = args[1]
     clients = client_count(args)
-
     with open(output_file, "w") as f:
         f.write(SERVER_CONFIG)
         for client_id in range(1, clients + 1):
