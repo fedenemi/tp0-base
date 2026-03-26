@@ -2,7 +2,6 @@ package common
 
 import (
 	"bufio"
-	"encoding/binary"
 	"fmt"
 	"net"
 	"os"
@@ -17,6 +16,7 @@ var log = logging.MustGetLogger("log")
 
 const connectRetries = 5
 const connectRetryDelay = 1 * time.Second
+const winnersRetryDelay = 500 * time.Millisecond
 
 type ClientConfig struct {
 	ID            string
@@ -51,31 +51,6 @@ func NewClient(config ClientConfig) *Client {
 	return client
 }
 
-
-func readAll(conn net.Conn, buf []byte) error {
-	total := 0
-	for total < len(buf) {
-		n, err := conn.Read(buf[total:])
-		total += n
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func writeAll(conn net.Conn, buf []byte) error {
-	total := 0
-	for total < len(buf) {
-		n, err := conn.Write(buf[total:])
-		total += n
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // CreateClientSocket Initializes client socket. In case of
 // failure, error is printed in stdout/stderr and exit 1
 // is returned
@@ -103,39 +78,6 @@ func (c *Client) closeConn() {
 	}
 }
 
-
-// Protocolo: 1 byte tipo 'B' + 4 bytes cantidad + por cada apuesta: 4 bytes longitud + datos
-func (c *Client) sendBatch(bets []Bet) error {
-	if err := writeAll(c.conn, []byte{'B'}); err != nil {
-		return err
-	}
-
-	countBuf := make([]byte, 4)
-	binary.BigEndian.PutUint32(countBuf, uint32(len(bets)))
-	if err := writeAll(c.conn, countBuf); err != nil {
-		return err
-	}
-
-	// Cada apuesta: longitud + datos
-	for _, bet := range bets {
-		msg := fmt.Sprintf("%s,%s,%s,%s,%s,%s\n",
-			bet.Agency, bet.FirstName, bet.LastName,
-			bet.Document, bet.Birthdate, bet.Number,
-		)
-		msgBytes := []byte(msg)
-		lenBuf := make([]byte, 4)
-		binary.BigEndian.PutUint32(lenBuf, uint32(len(msgBytes)))
-		if err := writeAll(c.conn, lenBuf); err != nil {
-			return err
-		}
-		if err := writeAll(c.conn, msgBytes); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// Protocolo: 1 byte tipo 'F' + 4 bytes agency_id
 func (c *Client) notifyFin() error {
 	if err := c.createClientSocket(); err != nil {
 		return err
@@ -143,10 +85,7 @@ func (c *Client) notifyFin() error {
 	defer c.closeConn()
 
 	agencyID, _ := parseAgencyID(c.config.ID)
-	buf := make([]byte, 5)
-	buf[0] = 'F'
-	binary.BigEndian.PutUint32(buf[1:], uint32(agencyID))
-	if err := writeAll(c.conn, buf); err != nil {
+	if err := SendFin(c.conn, agencyID); err != nil {
 		return err
 	}
 
@@ -163,51 +102,29 @@ func (c *Client) notifyFin() error {
 // Protocolo: 1 byte tipo 'W' + 4 bytes agency_id
 // Respuesta: 'WAIT\n' si el sorteo no ocurrió, o 4 bytes cantidad + DNIs
 func (c *Client) queryWinners() ([]string, error) {
+	agencyID, _ := parseAgencyID(c.config.ID)
+
 	for {
 		if err := c.createClientSocket(); err != nil {
 			return nil, err
 		}
 
-		agencyID, _ := parseAgencyID(c.config.ID)
-		buf := make([]byte, 5)
-		buf[0] = 'W'
-		binary.BigEndian.PutUint32(buf[1:], uint32(agencyID))
-		if err := writeAll(c.conn, buf); err != nil {
+		if err := SendWinnersQuery(c.conn, agencyID); err != nil {
 			c.closeConn()
 			return nil, err
 		}
 
-		header := make([]byte, 4)
-		if err := readAll(c.conn, header); err != nil {
-			c.closeConn()
+		winners, isWait, err := RecvWinners(c.conn)
+		c.closeConn()
+		if err != nil {
 			return nil, err
 		}
 
-		if string(header) == "WAIT" {
-			extra := make([]byte, 1) //  \n
-			readAll(c.conn, extra)
-			c.closeConn()
-			time.Sleep(500 * time.Millisecond)
+		if isWait {
+			time.Sleep(winnersRetryDelay)
 			continue
 		}
 
-		count := int(binary.BigEndian.Uint32(header))
-		winners := make([]string, 0, count)
-		for i := 0; i < count; i++ {
-			lenBuf := make([]byte, 4)
-			if err := readAll(c.conn, lenBuf); err != nil {
-				c.closeConn()
-				return nil, err
-			}
-			dniLen := int(binary.BigEndian.Uint32(lenBuf))
-			dniBuf := make([]byte, dniLen)
-			if err := readAll(c.conn, dniBuf); err != nil {
-				c.closeConn()
-				return nil, err
-			}
-			winners = append(winners, string(dniBuf))
-		}
-		c.closeConn()
 		return winners, nil
 	}
 }
@@ -274,7 +191,7 @@ func splitCSV(line string) []string {
 }
 
 func (c *Client) StartClientLoop() {
-		// There is an autoincremental msgID to identify every message sent
+	// There is an autoincremental msgID to identify every message sent
 	// Messages if the message amount threshold has not been surpassed
 	batches, err := c.readBets()
 	if err != nil {
@@ -295,7 +212,7 @@ func (c *Client) StartClientLoop() {
 			return
 		}
 
-		if err := c.sendBatch(batch); err != nil {
+		if err := SendBatch(c.conn, batch); err != nil {
 			log.Errorf("action: apuesta_enviada | result: fail | client_id: %v | error: %v", c.config.ID, err)
 			c.closeConn()
 			return
