@@ -3,6 +3,7 @@ import logging
 import signal
 import threading
 from common.utils import Bet, store_bets, load_bets, has_won
+from common import protocol
 
 
 class Server:
@@ -39,7 +40,10 @@ class Server:
         while self._running:
             try:
                 client_sock = self.__accept_new_connection()
-                t = threading.Thread(target=self.__handle_client_connection, args=(client_sock,))
+                t = threading.Thread(
+                    target=self.__handle_client_connection,
+                    args=(client_sock,)
+                )
                 t.start()
                 threads.append(t)
             except OSError:
@@ -50,15 +54,6 @@ class Server:
             t.join()
         logging.info("action: server_shutdown | result: success")
 
-    def __recv_all(self, sock, n):
-        data = b''
-        while len(data) < n:
-            chunk = sock.recv(n - len(data))
-            if not chunk:
-                raise OSError("connection closed")
-            data += chunk
-        return data
-
     def __handle_batch(self, client_sock):
         """
         Read message from a specific client socket and closes the socket
@@ -66,15 +61,10 @@ class Server:
         If a problem arises in the communication with the client, the
         client socket will also be closed
         """
-        raw_count = self.__recv_all(client_sock, 4)
-        batch_count = int.from_bytes(raw_count, byteorder='big')
+        messages = protocol.recv_batch(client_sock)
 
         bets = []
-        for _ in range(batch_count):
-            raw_len = self.__recv_all(client_sock, 4)
-            msg_len = int.from_bytes(raw_len, byteorder='big')
-            raw_msg = self.__recv_all(client_sock, msg_len)
-            msg = raw_msg.decode('utf-8').strip()
+        for msg in messages:
             fields = msg.split(',')
             bet = Bet(fields[0], fields[1], fields[2], fields[3], fields[4], fields[5])
             bets.append(bet)
@@ -83,41 +73,47 @@ class Server:
             store_bets(bets)
 
         for bet in bets:
-            logging.info(f'action: apuesta_almacenada | result: success | dni: {bet.document} | numero: {bet.number}')
+            logging.info(
+                f'action: apuesta_almacenada | result: success | '
+                f'dni: {bet.document} | numero: {bet.number}'
+            )
         logging.info(f'action: apuesta_recibida | result: success | cantidad: {len(bets)}')
-        client_sock.send(b'OK\n')
+        protocol.send_ok(client_sock)
 
     def __handle_fin(self, client_sock):
-        raw_agency = self.__recv_all(client_sock, 4)
-        agency_id = int.from_bytes(raw_agency, byteorder='big')
+        agency_id = protocol.recv_agency_id(client_sock)
 
         with self._lock:
             self._finished_agencies.add(agency_id)
-            if len(self._finished_agencies) == self._agencies_amount:
+            lottery_just_done = (len(self._finished_agencies) == self._agencies_amount)
+            if lottery_just_done:
                 self._lottery_done = True
-                logging.info("action: sorteo | result: success")
 
-        client_sock.send(b'OK\n')
+        if lottery_just_done:
+            logging.info("action: sorteo | result: success")
+
+        protocol.send_ok(client_sock)
 
     def __handle_winners(self, client_sock):
-        raw_agency = self.__recv_all(client_sock, 4)
-        agency_id = int.from_bytes(raw_agency, byteorder='big')
+        agency_id = protocol.recv_agency_id(client_sock)
 
         with self._lock:
-            if not self._lottery_done:
-                client_sock.send(b'WAIT\n')
-                return
-            winners = [b for b in load_bets() if b.agency == agency_id and has_won(b)]
+            lottery_done = self._lottery_done
+            if lottery_done:
+                winners = [
+                    b for b in load_bets()
+                    if b.agency == agency_id and has_won(b)
+                ]
 
-        client_sock.send(len(winners).to_bytes(4, byteorder='big'))
-        for w in winners:
-            dni_bytes = w.document.encode('utf-8')
-            client_sock.send(len(dni_bytes).to_bytes(4, byteorder='big'))
-            client_sock.send(dni_bytes)
+        if not lottery_done:
+            protocol.send_wait(client_sock)
+            return
+
+        protocol.send_winners(client_sock, winners)
 
     def __handle_client_connection(self, client_sock):
         try:
-            msg_type = self.__recv_all(client_sock, 1)
+            msg_type = protocol.recv_msg_type(client_sock)
 
             if msg_type == b'B':
                 self.__handle_batch(client_sock)
@@ -130,7 +126,7 @@ class Server:
         except Exception as e:
             logging.error(f'action: apuesta_recibida | result: fail | cantidad: 0 | error: {e}')
             try:
-                client_sock.send(b'ERROR\n')
+                protocol.send_error(client_sock)
             except Exception:
                 pass
         finally:
